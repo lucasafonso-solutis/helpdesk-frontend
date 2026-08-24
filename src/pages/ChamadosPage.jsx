@@ -30,7 +30,7 @@ function ticketCategory(ticket) {
   return ticket.ticketCategory || ticket.category || 'UNKNOWN';
 }
 
-function ChamadosPage() {
+function ChamadosPage({ onTicketsCountChange }) {
   const [tickets, setTickets] = useState([]);
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
@@ -52,6 +52,10 @@ function ChamadosPage() {
       .catch(() => setApiError('Não foi possível carregar os chamados do banco de dados.'))
       .finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    onTicketsCountChange?.(tickets.length);
+  }, [tickets.length, onTicketsCountChange]);
 
   const filteredTickets = useMemo(() => tickets.filter((ticket) => {
     const matchesQuery = `${ticket.title || ''} ${ticket.id || ''}`.toLowerCase().includes(query.toLowerCase());
