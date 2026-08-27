@@ -6,6 +6,11 @@ import {
 
 const API_URL = import.meta.env.VITE_API_URL || '/api';
 
+function getAuthHeaders() {
+  const session = JSON.parse(localStorage.getItem('helpdesk-session') || 'null');
+  return session?.token ? { Authorization: `Bearer ${session.token}` } : {};
+}
+
 const statusLabels = {
   OPEN: 'Aberto',
   IN_PROGRESS: 'Em atendimento',
@@ -30,7 +35,7 @@ function ticketCategory(ticket) {
   return ticket.ticketCategory || ticket.category || 'UNKNOWN';
 }
 
-function ChamadosPage({ onTicketsCountChange }) {
+function ChamadosPage({ session, onTicketsCountChange }) {
   const [tickets, setTickets] = useState([]);
   const [users, setUsers] = useState([]);
   const [query, setQuery] = useState('');
@@ -42,9 +47,13 @@ function ChamadosPage({ onTicketsCountChange }) {
   const [selectedTicket, setSelectedTicket] = useState(null);
   const [pendingChanges, setPendingChanges] = useState({});
   const [actionLoading, setActionLoading] = useState(false);
+  const isClient = session?.role === 'CLIENT';
+  const isAdmin = session?.role === 'ADMIN';
 
   useEffect(() => {
-    fetch(`${API_URL}/tickets`)
+    fetch(`${API_URL}/tickets`, {
+      headers: getAuthHeaders(),
+    })
       .then((response) => response.ok ? response.json() : Promise.reject(new Error('API indisponível')))
       .then((data) => {
         setTickets(Array.isArray(data) ? data : []);
@@ -55,47 +64,63 @@ function ChamadosPage({ onTicketsCountChange }) {
   }, []);
 
   useEffect(() => {
-    fetch(`${API_URL}/users`)
+    if (isAdmin) return;
+    const userIds = [...new Set(tickets.flatMap((ticket) => [ticket.customerId, ticket.technicianId]).filter(Boolean))];
+    Promise.all(userIds.map((id) => fetch(`${API_URL}/users/${id}/summary`, { headers: getAuthHeaders() }).then((response) => response.ok ? response.json() : null)))
+      .then((summaries) => setUsers(summaries.filter(Boolean)))
+      .catch(() => setUsers([]));
+  }, [tickets, isAdmin]);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    fetch(`${API_URL}/users`, {
+      headers: getAuthHeaders(),
+    })
       .then((response) => response.ok ? response.json() : Promise.reject(new Error('API indisponível')))
       .then((data) => setUsers(Array.isArray(data) ? data : []))
       .catch(() => setUsers([]));
-  }, []);
+  }, [isAdmin]);
 
   useEffect(() => {
     onTicketsCountChange?.(tickets.length);
   }, [tickets.length, onTicketsCountChange]);
 
-  const filteredTickets = useMemo(() => tickets.filter((ticket) => {
+  const visibleTickets = isClient
+    ? tickets.filter((ticket) => Number(ticket.customerId) === Number(session.userId))
+    : session?.role === 'TECHNICIAN'
+      ? tickets.filter((ticket) => Number(ticket.technicianId) === Number(session.userId))
+      : tickets;
+  const filteredTickets = useMemo(() => visibleTickets.filter((ticket) => {
     const matchesQuery = `${ticket.title || ''} ${ticket.id || ''}`.toLowerCase().includes(query.toLowerCase());
     return matchesQuery && (statusFilter === 'ALL' || ticketStatus(ticket) === statusFilter) && (priorityFilter === 'ALL' || ticket.priority === priorityFilter);
-  }), [tickets, query, statusFilter, priorityFilter]);
+  }), [visibleTickets, query, statusFilter, priorityFilter]);
 
   const metrics = [
-    { label: 'Total de chamados', value: tickets.length, icon: FileText, tone: 'blue' },
-    { label: 'Abertos', value: tickets.filter((ticket) => ticketStatus(ticket) === 'OPEN').length, icon: CircleDot, tone: 'amber' },
-    { label: 'Em atendimento', value: tickets.filter((ticket) => ticketStatus(ticket) === 'IN_PROGRESS').length, icon: Activity, tone: 'violet' },
-    { label: 'Resolvidos', value: tickets.filter((ticket) => ticketStatus(ticket) === 'RESOLVED').length, icon: CheckCircle2, tone: 'green' },
-    { label: 'Chamados críticos', value: tickets.filter((ticket) => ticket.priority === 'CRITICAL').length, icon: AlertTriangle, tone: 'red' },
+    { label: 'Total de chamados', value: visibleTickets.length, icon: FileText, tone: 'blue' },
+    { label: 'Abertos', value: visibleTickets.filter((ticket) => ticketStatus(ticket) === 'OPEN').length, icon: CircleDot, tone: 'amber' },
+    { label: 'Em atendimento', value: visibleTickets.filter((ticket) => ticketStatus(ticket) === 'IN_PROGRESS').length, icon: Activity, tone: 'violet' },
+    { label: 'Resolvidos', value: visibleTickets.filter((ticket) => ticketStatus(ticket) === 'RESOLVED').length, icon: CheckCircle2, tone: 'green' },
+    { label: 'Chamados críticos', value: visibleTickets.filter((ticket) => ticket.priority === 'CRITICAL').length, icon: AlertTriangle, tone: 'red' },
   ];
 
-  const clients = users.filter((user) => user.userRole === 'CLIENT');
   const technicians = users.filter((user) => user.userRole === 'TECHNICIAN');
 
   async function createTicket(event) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    const customerId = form.get('customerId');
-    const technicianId = form.get('technicianId');
     const response = await fetch(`${API_URL}/tickets`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAuthHeaders(),
+      },
       body: JSON.stringify({
         title: form.get('title'),
         description: form.get('description'),
         ticketCategory: form.get('category'),
         priority: form.get('priority'),
-        customerId: customerId ? Number(customerId) : null,
-        technicianId: technicianId ? Number(technicianId) : null,
+        customerId: session.userId ? Number(session.userId) : null,
+        technicianId: null,
       }),
     });
     if (!response.ok) {
@@ -122,14 +147,21 @@ function ChamadosPage({ onTicketsCountChange }) {
       if (pendingChanges.ticketPriority) params.set('ticketPriority', pendingChanges.ticketPriority);
       let updatedTicket = selectedTicket;
       if (params.toString() || pendingChanges.technicianId === undefined) {
-        const response = await fetch(`${API_URL}/tickets/${selectedTicket.id}?${params.toString()}`, { method: 'PUT' });
+        const response = await fetch(`${API_URL}/tickets/${selectedTicket.id}?${params.toString()}`, {
+          method: 'PUT',
+          headers: getAuthHeaders(),
+        });
         if (!response.ok) throw new Error('Falha ao atualizar chamado');
         updatedTicket = await response.json();
       }
       if (pendingChanges.technicianId) {
-        const response = await fetch(`${API_URL}/tickets/${selectedTicket.id}/technician/${pendingChanges.technicianId}`, { method: 'PUT' });
+        const response = await fetch(`${API_URL}/tickets/${selectedTicket.id}/technician/${pendingChanges.technicianId}`, {
+          method: 'PUT',
+          headers: getAuthHeaders(),
+        });
         if (!response.ok) throw new Error('Falha ao atribuir técnico');
-        updatedTicket = await response.json();
+        const assignmentResponse = await response.json();
+        updatedTicket = { ...assignmentResponse, technicianId: pendingChanges.technicianId };
       }
       setTickets((current) => current.map((ticket) => ticket.id === updatedTicket.id ? updatedTicket : ticket));
       setSelectedTicket(updatedTicket);
@@ -144,7 +176,10 @@ function ChamadosPage({ onTicketsCountChange }) {
   async function closeTicket(ticket) {
     setActionLoading(true);
     try {
-      const response = await fetch(`${API_URL}/tickets/${ticket.id}`, { method: 'DELETE' });
+      const response = await fetch(`${API_URL}/tickets/${ticket.id}`, {
+        method: 'DELETE',
+        headers: getAuthHeaders(),
+      });
       if (!response.ok) throw new Error('Falha ao encerrar chamado');
       const updatedTicket = await response.json();
       setTickets((current) => current.map((item) => item.id === updatedTicket.id ? updatedTicket : item));
@@ -165,8 +200,8 @@ function ChamadosPage({ onTicketsCountChange }) {
       <div className="table-footer"><span>Mostrando <strong>{filteredTickets.length}</strong> de <strong>{tickets.length}</strong> chamados</span><div className="pagination"><button disabled>‹</button><button className="current-page">1</button><button disabled>›</button></div></div>
     </section>
 
-    {isModalOpen && <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setModalOpen(false)}><div className="modal"><div className="modal-header"><div><p className="eyebrow">NOVO ATENDIMENTO</p><h2>Abrir chamado</h2></div><button className="close-button" onClick={() => setModalOpen(false)} aria-label="Fechar"><X size={20} /></button></div><form onSubmit={createTicket}><label>Título<input name="title" required placeholder="Ex.: Notebook não liga" /></label><label>Descrição<textarea name="description" required placeholder="Descreva o problema com o máximo de detalhes" rows="4" /></label><div className="form-grid"><label>Usuário<select name="customerId" defaultValue="" required><option value="">Selecione um usuário</option>{clients.map((user) => <option value={user.id} key={user.id}>{user.name}</option>)}</select></label><label>Técnico<select name="technicianId" defaultValue=""><option value="">Não atribuído</option>{technicians.map((user) => <option value={user.id} key={user.id}>{user.name}</option>)}</select></label></div><div className="form-grid"><label>Categoria<select name="category" defaultValue="SOFTWARE"><option value="HARDWARE">Hardware</option><option value="SOFTWARE">Software</option><option value="NETWORK">Rede</option></select></label><label>Prioridade<select name="priority" defaultValue="MEDIUM"><option value="LOW">Baixa</option><option value="MEDIUM">Média</option><option value="HIGH">Alta</option><option value="CRITICAL">Crítica</option></select></label></div><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setModalOpen(false)}>Cancelar</button><button type="submit" className="primary-button">Criar chamado <ArrowUpRight size={17} /></button></div></form></div></div>}
-    {selectedTicket && <><button className="confirm-changes-button" disabled={actionLoading || Object.keys(pendingChanges).length === 0} onClick={saveChanges}>{actionLoading ? 'Salvando...' : 'Confirmar alterações'}</button><div className="drawer-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setSelectedTicket(null)}><aside className="ticket-drawer"><div className="drawer-header"><div><p className="eyebrow">DETALHES DO CHAMADO</p><h2>#{selectedTicket.id}</h2></div><button className="close-button" onClick={() => setSelectedTicket(null)} aria-label="Fechar detalhes"><X size={20} /></button></div><div className="drawer-title"><span className={`status ${ticketStatus(selectedTicket).toLowerCase()}`}>{statusLabels[ticketStatus(selectedTicket)] || ticketStatus(selectedTicket)}</span><h3>{selectedTicket.title}</h3><p>{selectedTicket.description}</p></div><div className="detail-grid"><div><span>Usuário</span><strong>{users.find((user) => user.id === selectedTicket.customerId)?.name || 'Não informado'}</strong></div><div><span>Técnico</span><strong>{users.find((user) => user.id === selectedTicket.technicianId)?.name || 'Não atribuído'}</strong></div><div><span>Categoria</span><strong>{categoryLabels[ticketCategory(selectedTicket)] || ticketCategory(selectedTicket)}</strong></div><div><span>Prioridade</span><strong>{priorityLabels[selectedTicket.priority] || selectedTicket.priority}</strong></div><div><span>Criado em</span><strong>{formatDate(selectedTicket.createdAt)}</strong></div><div><span>Atualizado em</span><strong>{formatDate(selectedTicket.updatedAt || selectedTicket.createdAt)}</strong></div></div><div className="drawer-actions"><label>Status<select value={ticketStatus(selectedTicket)} disabled={actionLoading} onChange={(event) => updateTicket(selectedTicket, { ticketStatus: event.target.value })}>{Object.entries(statusLabels).map(([key, label]) => <option value={key} key={key}>{label}</option>)}</select></label><label>Prioridade<select value={selectedTicket.priority || ''} disabled={actionLoading} onChange={(event) => updateTicket(selectedTicket, { ticketPriority: event.target.value })}>{Object.entries(priorityLabels).map(([key, label]) => <option value={key} key={key}>{label}</option>)}</select></label><label>Técnico<select value={selectedTicket.technicianId || ''} disabled={actionLoading} onChange={(event) => updateTicket(selectedTicket, { technicianId: event.target.value ? Number(event.target.value) : null })}><option value="">Não atribuído</option>{technicians.map((user) => <option value={user.id} key={user.id}>{user.name}</option>)}</select></label><button className="close-ticket-button" disabled={actionLoading || ticketStatus(selectedTicket) === 'CLOSED'} onClick={() => closeTicket(selectedTicket)}><CheckCircle2 size={16} /> Encerrar chamado</button></div></aside></div></>}
+    {isModalOpen && <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setModalOpen(false)}><div className="modal"><div className="modal-header"><div><p className="eyebrow">NOVO ATENDIMENTO</p><h2>Abrir chamado</h2></div><button className="close-button" onClick={() => setModalOpen(false)} aria-label="Fechar"><X size={20} /></button></div><form onSubmit={createTicket}><label>Título<input name="title" required placeholder="Ex.: Notebook não liga" /></label><label>Descrição<textarea name="description" required placeholder="Descreva o problema com o máximo de detalhes" rows="4" /></label><div className="form-grid"><label>Categoria<select name="category" defaultValue="SOFTWARE"><option value="HARDWARE">Hardware</option><option value="SOFTWARE">Software</option><option value="NETWORK">Rede</option></select></label><label>Prioridade<select name="priority" defaultValue="MEDIUM"><option value="LOW">Baixa</option><option value="MEDIUM">Média</option><option value="HIGH">Alta</option><option value="CRITICAL">Crítica</option></select></label></div><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setModalOpen(false)}>Cancelar</button><button type="submit" className="primary-button">Criar chamado <ArrowUpRight size={17} /></button></div></form></div></div>}
+    {selectedTicket && <><>{!isClient && <button className="confirm-changes-button" disabled={actionLoading || Object.keys(pendingChanges).length === 0} onClick={saveChanges}>{actionLoading ? 'Salvando...' : 'Confirmar alterações'}</button>}</><div className="drawer-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setSelectedTicket(null)}><aside className="ticket-drawer"><div className="drawer-header"><div><p className="eyebrow">DETALHES DO CHAMADO</p><h2>#{selectedTicket.id}</h2></div><button className="close-button" onClick={() => setSelectedTicket(null)} aria-label="Fechar detalhes"><X size={20} /></button></div><div className="drawer-title"><span className={`status ${ticketStatus(selectedTicket).toLowerCase()}`}>{statusLabels[ticketStatus(selectedTicket)] || ticketStatus(selectedTicket)}</span><h3>{selectedTicket.title}</h3><p>{selectedTicket.description}</p></div><div className="detail-grid"><div><span>Usuário</span><strong>{users.find((user) => user.id === selectedTicket.customerId)?.name || (Number(selectedTicket.customerId) === Number(session.userId) ? session.name : 'Não informado')}</strong></div><div><span>Técnico</span><strong>{users.find((user) => user.id === selectedTicket.technicianId)?.name || (Number(selectedTicket.technicianId) === Number(session.userId) ? session.name : 'Não atribuído')}</strong></div><div><span>Categoria</span><strong>{categoryLabels[ticketCategory(selectedTicket)] || ticketCategory(selectedTicket)}</strong></div><div><span>Prioridade</span><strong>{priorityLabels[selectedTicket.priority] || selectedTicket.priority}</strong></div><div><span>Criado em</span><strong>{formatDate(selectedTicket.createdAt)}</strong></div><div><span>Atualizado em</span><strong>{formatDate(selectedTicket.updatedAt || selectedTicket.createdAt)}</strong></div></div>{!isClient && <div className="drawer-actions"><label>Status<select value={ticketStatus(selectedTicket)} disabled={actionLoading} onChange={(event) => updateTicket(selectedTicket, { ticketStatus: event.target.value })}>{Object.entries(statusLabels).map(([key, label]) => <option value={key} key={key}>{label}</option>)}</select></label><label>Prioridade<select value={selectedTicket.priority || ''} disabled={actionLoading} onChange={(event) => updateTicket(selectedTicket, { ticketPriority: event.target.value })}>{Object.entries(priorityLabels).map(([key, label]) => <option value={key} key={key}>{label}</option>)}</select></label>{isAdmin && <label>Técnico<select value={selectedTicket.technicianId || ''} disabled={actionLoading} onChange={(event) => updateTicket(selectedTicket, { technicianId: event.target.value ? Number(event.target.value) : null })}><option value="">Não atribuído</option>{technicians.map((user) => <option value={user.id} key={user.id}>{user.name}</option>)}</select></label>}<button className="close-ticket-button" disabled={actionLoading || ticketStatus(selectedTicket) === 'CLOSED'} onClick={() => closeTicket(selectedTicket)}><CheckCircle2 size={16} /> Encerrar chamado</button></div>}</aside></div></>}
   </section>;
 }
 

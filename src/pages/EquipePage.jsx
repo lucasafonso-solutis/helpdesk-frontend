@@ -4,12 +4,17 @@ import { Activity, ArrowUpRight, Search, Users, X } from 'lucide-react';
 const API_URL = import.meta.env.VITE_API_URL || '/api';
 const roleLabels = { CLIENT: 'Cliente', TECHNICIAN: 'Técnico', ADMIN: 'Administrador' };
 
+function getAuthHeaders() {
+  const session = JSON.parse(localStorage.getItem('helpdesk-session') || 'null');
+  return session?.token ? { Authorization: `Bearer ${session.token}` } : {};
+}
+
 function formatDate(value) {
   if (!value) return 'Não informado';
   return new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' }).format(new Date(value));
 }
 
-function EquipePage() {
+function EquipePage({ session }) {
   const [users, setUsers] = useState([]);
   const [query, setQuery] = useState('');
   const [roleFilter, setRoleFilter] = useState('ALL');
@@ -19,7 +24,9 @@ function EquipePage() {
   const [inspectedUser, setInspectedUser] = useState(null);
 
   useEffect(() => {
-    fetch(`${API_URL}/users`)
+    fetch(`${API_URL}/users`, {
+      headers: getAuthHeaders(),
+    })
       .then((response) => response.ok ? response.json() : Promise.reject(new Error('API indisponível')))
       .then((data) => setUsers(Array.isArray(data) ? data : []))
       .catch(() => setApiError('Não foi possível carregar os usuários do banco de dados.'))
@@ -34,8 +41,11 @@ function EquipePage() {
     const editing = userModal.mode === 'edit';
     const response = await fetch(`${API_URL}/users${editing ? `/${userModal.user.id}` : ''}`, {
       method: editing ? 'PUT' : 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: form.get('name'), email: form.get('email'), userRole: form.get('userRole') }),
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAuthHeaders(),
+      },
+      body: JSON.stringify({ name: form.get('name'), email: form.get('email'), userRole: form.get('userRole'), ...(editing ? {} : { passwordHash: form.get('password') }) }),
     });
     if (!response.ok) {
       setApiError('Não foi possível salvar o usuário.');
@@ -47,13 +57,18 @@ function EquipePage() {
   }
 
   async function inspectUser(user) {
-    const response = await fetch(`${API_URL}/users/${user.id}`);
+    const response = await fetch(`${API_URL}/users/${user.id}`, {
+      headers: getAuthHeaders(),
+    });
     if (response.ok) setInspectedUser(await response.json());
   }
 
   async function deactivateUser(user) {
     if (!window.confirm(`Inativar ${user.name}?`)) return;
-    const response = await fetch(`${API_URL}/users/${user.id}`, { method: 'DELETE' });
+    const response = await fetch(`${API_URL}/users/${user.id}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    });
     if (response.ok) setUsers((current) => current.filter((item) => item.id !== user.id));
     else setApiError('Não foi possível inativar o usuário.');
   }
@@ -68,7 +83,7 @@ function EquipePage() {
     </section>
 
     {inspectedUser && <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setInspectedUser(null)}><div className="modal user-inspection"><div className="modal-header"><div><p className="eyebrow">CONSULTA DE USUÁRIO</p><h2>{inspectedUser.name}</h2></div><button className="close-button" onClick={() => setInspectedUser(null)} aria-label="Fechar"><X size={20} /></button></div><div className="detail-grid"><div><span>ID</span><strong>#{inspectedUser.id}</strong></div><div><span>Perfil</span><strong>{roleLabels[inspectedUser.userRole] || inspectedUser.userRole}</strong></div><div><span>E-mail</span><strong>{inspectedUser.email}</strong></div><div><span>Status</span><strong>{inspectedUser.active ? 'Ativo' : 'Inativo'}</strong></div><div><span>Criado em</span><strong>{formatDate(inspectedUser.createdAt)}</strong></div></div></div></div>}
-    {userModal && <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setUserModal(null)}><div className="modal"><div className="modal-header"><div><p className="eyebrow">USER-SERVICE</p><h2>{userModal.mode === 'edit' ? 'Editar usuário' : 'Novo usuário'}</h2></div><button className="close-button" onClick={() => setUserModal(null)} aria-label="Fechar"><X size={20} /></button></div><form onSubmit={saveUser}><label>Nome<input name="name" required defaultValue={userModal.user?.name || ''} placeholder="Nome completo" /></label><label>E-mail<input type="email" name="email" required defaultValue={userModal.user?.email || ''} placeholder="usuario@empresa.com" /></label><label>Perfil<select name="userRole" defaultValue={userModal.user?.userRole || 'CLIENT'}><option value="CLIENT">Cliente</option><option value="TECHNICIAN">Técnico</option><option value="ADMIN">Administrador</option></select></label><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setUserModal(null)}>Cancelar</button><button type="submit" className="primary-button">Salvar usuário <ArrowUpRight size={17} /></button></div></form></div></div>}
+    {userModal && <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setUserModal(null)}><div className="modal"><div className="modal-header"><div><p className="eyebrow">USER-SERVICE</p><h2>{userModal.mode === 'edit' ? 'Editar usuário' : 'Novo usuário'}</h2></div><button className="close-button" onClick={() => setUserModal(null)} aria-label="Fechar"><X size={20} /></button></div><form onSubmit={saveUser}><label>Nome<input name="name" required defaultValue={userModal.user?.name || ''} placeholder="Nome completo" /></label><label>E-mail<input type="email" name="email" required defaultValue={userModal.user?.email || ''} placeholder="usuario@empresa.com" /></label>{userModal.mode === 'create' && <label>Senha<input type="password" name="password" required minLength="6" placeholder="Senha de acesso" /></label>}<label>Perfil<select name="userRole" defaultValue={userModal.user?.userRole || 'CLIENT'}><option value="CLIENT">Cliente</option><option value="TECHNICIAN">Técnico</option><option value="ADMIN">Administrador</option></select></label><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setUserModal(null)}>Cancelar</button><button type="submit" className="primary-button">Salvar usuário <ArrowUpRight size={17} /></button></div></form></div></div>}
   </section>;
 }
 
