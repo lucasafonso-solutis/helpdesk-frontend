@@ -163,6 +163,13 @@ button { cursor: pointer; border: 0; }
 
 tbody tr { cursor: pointer; }
 tbody tr:hover { background: #fafcf9; }
+
+.advanced-filters { padding: 13px 16px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; align-items: end; gap: 10px; border-bottom: 1px solid var(--line); background: #fbfcf9; }
+.advanced-filters label { display: flex; flex-direction: column; gap: 5px; min-width: 0; color: #59675f; font-size: 11px; font-weight: 600; }
+.advanced-filters select, .advanced-filters input { height: 34px; padding: 0 9px; color: var(--ink); background: #fff; border: 1px solid var(--line); border-radius: 5px; font-size: 11px; }
+.advanced-filters .secondary-button { height: 34px; }
+.advanced-filters .secondary-button { margin-left: 0; white-space: nowrap; }
+@media (max-width: 680px) { .advanced-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; }.advanced-filters label { min-width: 0; }.advanced-filters .secondary-button { margin-left: 0; } }
 .drawer-backdrop { position: fixed; inset: 0; z-index: 3; display: flex; justify-content: flex-end; background: #18251f66; }
 .ticket-drawer { width: min(100%, 490px); height: 100%; padding: 30px; overflow-y: auto; background: #fff; box-shadow: -16px 0 40px #18251f20; }
 .drawer-header { display: flex; justify-content: space-between; align-items: flex-start; }

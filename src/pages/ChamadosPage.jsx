@@ -46,6 +46,11 @@ function ChamadosPage({ session, onTicketsCountChange }) {
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [priorityFilter, setPriorityFilter] = useState('ALL');
+  const [categoryFilter, setCategoryFilter] = useState('ALL');
+  const [technicianFilter, setTechnicianFilter] = useState('ALL');
+  const [createdFrom, setCreatedFrom] = useState('');
+  const [createdTo, setCreatedTo] = useState('');
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [isModalOpen, setModalOpen] = useState(false);
   const [isLoading, setLoading] = useState(true);
   const [apiError, setApiError] = useState('');
@@ -58,7 +63,15 @@ function ChamadosPage({ session, onTicketsCountChange }) {
   useEffect(() => {
     setLoading(true);
     const params = new URLSearchParams({ page, size: pageSize, sort });
+    if (query.trim()) params.set('search', query.trim());
+    if (statusFilter !== 'ALL') params.set('status', statusFilter);
+    if (priorityFilter !== 'ALL') params.set('priority', priorityFilter);
+    if (categoryFilter !== 'ALL') params.set('category', categoryFilter);
     if (session?.role === 'TECHNICIAN') params.set('technicianId', session.userId);
+    if (isClient) params.set('customerId', session.userId);
+    if (isAdmin && technicianFilter !== 'ALL') params.set('technicianId', technicianFilter);
+    if (createdFrom) params.set('createdFrom', `${createdFrom}T00:00:00`);
+    if (createdTo) params.set('createdTo', `${createdTo}T23:59:59`);
     fetch(`${API_URL}/tickets?${params}`, {
       headers: getAuthHeaders(),
     })
@@ -71,7 +84,7 @@ function ChamadosPage({ session, onTicketsCountChange }) {
       })
       .catch(() => setApiError('Não foi possível carregar os chamados do banco de dados.'))
       .finally(() => setLoading(false));
-  }, [page, pageSize, sort, session?.role, session?.userId]);
+  }, [page, pageSize, sort, query, statusFilter, priorityFilter, categoryFilter, technicianFilter, createdFrom, createdTo, session?.role, session?.userId, isClient, isAdmin]);
 
   useEffect(() => {
     if (isAdmin) return;
@@ -107,6 +120,14 @@ function ChamadosPage({ session, onTicketsCountChange }) {
 
   function resetToFirstPage(setter) {
     setter();
+    setPage(0);
+  }
+
+  function clearAdvancedFilters() {
+    setCategoryFilter('ALL');
+    setTechnicianFilter('ALL');
+    setCreatedFrom('');
+    setCreatedTo('');
     setPage(0);
   }
 
@@ -211,7 +232,8 @@ function ChamadosPage({ session, onTicketsCountChange }) {
     <div className="page-heading"><div><p className="eyebrow">SEGUNDA-FEIRA, 24 DE AGOSTO DE 2026</p><h1>Central de chamados</h1><p className="subheading">Acompanhe e organize o suporte da sua operação.</p></div><button className="primary-button" onClick={() => setModalOpen(true)}><Plus size={18} /> Novo chamado</button></div>
     <div className="metrics-grid">{metrics.map(({ label, value, icon: Icon, tone }) => <article className="metric-card" key={label}><div className={`metric-icon ${tone}`}><Icon size={19} /></div><div className="metric-copy"><span>{label}</span><strong>{value}</strong></div></article>)}</div>
     <div className="section-header"><div><h2>Todos os chamados</h2><p>Visão geral da fila de atendimento</p></div></div>
-    <section className="ticket-panel"><div className="toolbar"><div className="search-field"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar por título ou número..." /></div><div className="filter-group"><select value={statusFilter} onChange={(event) => resetToFirstPage(() => setStatusFilter(event.target.value))} aria-label="Filtrar por status"><option value="ALL">Todos os status</option>{Object.entries(statusLabels).map(([key, label]) => <option value={key} key={key}>{label}</option>)}</select><select value={priorityFilter} onChange={(event) => resetToFirstPage(() => setPriorityFilter(event.target.value))} aria-label="Filtrar por prioridade"><option value="ALL">Todas prioridades</option>{Object.entries(priorityLabels).map(([key, label]) => <option value={key} key={key}>{label}</option>)}</select><select value={sort} onChange={(event) => resetToFirstPage(() => setSort(event.target.value))} aria-label="Ordenar chamados"><option value="createdAt,desc">Mais recentes</option><option value="createdAt,asc">Mais antigos</option><option value="priority,desc">Maior prioridade</option><option value="title,asc">Título (A-Z)</option></select><button className="filter-button" aria-label="Mais filtros"><SlidersHorizontal size={17} /></button></div></div>
+    <section className="ticket-panel"><div className="toolbar"><div className="search-field"><Search size={17} /><input value={query} onChange={(event) => resetToFirstPage(() => setQuery(event.target.value))} placeholder="Buscar por título ou número..." /></div><div className="filter-group"><select value={statusFilter} onChange={(event) => resetToFirstPage(() => setStatusFilter(event.target.value))} aria-label="Filtrar por status"><option value="ALL">Todos os status</option>{Object.entries(statusLabels).map(([key, label]) => <option value={key} key={key}>{label}</option>)}</select><select value={priorityFilter} onChange={(event) => resetToFirstPage(() => setPriorityFilter(event.target.value))} aria-label="Filtrar por prioridade"><option value="ALL">Todas prioridades</option>{Object.entries(priorityLabels).map(([key, label]) => <option value={key} key={key}>{label}</option>)}</select><select value={sort} onChange={(event) => resetToFirstPage(() => setSort(event.target.value))} aria-label="Ordenar chamados"><option value="createdAt,desc">Mais recentes</option><option value="createdAt,asc">Mais antigos</option><option value="priority,desc">Maior prioridade</option><option value="title,asc">Título (A-Z)</option></select><button className="filter-button" onClick={() => setShowAdvancedFilters((current) => !current)} aria-label="Mais filtros" aria-expanded={showAdvancedFilters}><SlidersHorizontal size={17} /></button></div></div>
+      {showAdvancedFilters && <div className="advanced-filters"><label>Categoria<select value={categoryFilter} onChange={(event) => resetToFirstPage(() => setCategoryFilter(event.target.value))}><option value="ALL">Todas categorias</option>{Object.entries(categoryLabels).map(([key, label]) => <option value={key} key={key}>{label}</option>)}</select></label>{isAdmin && <label>Técnico<select value={technicianFilter} onChange={(event) => resetToFirstPage(() => setTechnicianFilter(event.target.value))}><option value="ALL">Todos os técnicos</option>{technicians.map((technician) => <option value={technician.id} key={technician.id}>{technician.name}</option>)}</select></label>}<label>Criados a partir de<input type="date" value={createdFrom} onChange={(event) => resetToFirstPage(() => setCreatedFrom(event.target.value))} /></label><label>Criados até<input type="date" value={createdTo} onChange={(event) => resetToFirstPage(() => setCreatedTo(event.target.value))} /></label><button className="secondary-button" onClick={clearAdvancedFilters}>Limpar filtros</button></div>}
       <div className="table-wrap">{apiError ? <div className="empty-state error-state"><AlertTriangle size={22} /><strong>{apiError}</strong><span>Confirme se o gateway e o banco estão em execução.</span></div> : isLoading ? <div className="empty-state"><Activity size={22} /><strong>Carregando chamados...</strong></div> : <><table><thead><tr><th>Chamado</th><th>Categoria</th><th>Prioridade</th><th>Status</th><th>Atualizado</th><th /></tr></thead><tbody>{filteredTickets.map((ticket) => <tr key={ticket.id} onClick={() => setSelectedTicket(ticket)}><td><div className="ticket-title"><span className="ticket-id">#{ticket.id}</span><strong>{ticket.title}</strong></div></td><td><span className="category-label">{categoryLabels[ticketCategory(ticket)] || ticketCategory(ticket)}</span></td><td><span className={`priority ${(ticket.priority || 'UNKNOWN').toLowerCase()}`}><span />{priorityLabels[ticket.priority] || ticket.priority || 'Não informada'}</span></td><td><span className={`status ${ticketStatus(ticket).toLowerCase()}`}>{statusLabels[ticketStatus(ticket)] || ticketStatus(ticket)}</span></td><td><span className="date-label"><Clock3 size={14} />{formatDate(ticket.updatedAt || ticket.createdAt)}</span></td><td><button className="row-menu" aria-label={`Abrir chamado ${ticket.id}`}>•••</button></td></tr>)}</tbody></table>{filteredTickets.length === 0 && <div className="empty-state"><Search size={22} /><strong>Nenhum chamado encontrado</strong><span>O banco de dados não possui chamados para estes filtros.</span></div>}</>}</div>
       <div className="table-footer"><span>Mostrando <strong>{filteredTickets.length}</strong> de <strong>{totalTickets}</strong> chamados</span><div className="pagination"><button disabled={page === 0} onClick={() => setPage((current) => current - 1)} aria-label="Página anterior"><ChevronLeft size={16} /></button><span className="current-page">{totalPages === 0 ? 0 : page + 1} / {totalPages}</span><button disabled={page >= totalPages - 1} onClick={() => setPage((current) => current + 1)} aria-label="Próxima página"><ChevronRight size={16} /></button><select value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(0); }} aria-label="Chamados por página"><option value="10">10 por página</option><option value="25">25 por página</option><option value="50">50 por página</option></select></div></div>
     </section>
