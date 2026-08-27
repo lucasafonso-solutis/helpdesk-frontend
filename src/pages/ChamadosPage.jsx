@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  Activity, AlertTriangle, ArrowUpRight, CheckCircle2, CircleDot, Clock3,
+  Activity, AlertTriangle, ArrowUpRight, CheckCircle2, ChevronLeft, ChevronRight, CircleDot, Clock3,
   FileText, Plus, Search, SlidersHorizontal, X,
 } from 'lucide-react';
 
@@ -37,6 +37,11 @@ function ticketCategory(ticket) {
 
 function ChamadosPage({ session, onTicketsCountChange }) {
   const [tickets, setTickets] = useState([]);
+  const [totalTickets, setTotalTickets] = useState(0);
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(10);
+  const [sort, setSort] = useState('createdAt,desc');
+  const [totalPages, setTotalPages] = useState(0);
   const [users, setUsers] = useState([]);
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
@@ -51,17 +56,22 @@ function ChamadosPage({ session, onTicketsCountChange }) {
   const isAdmin = session?.role === 'ADMIN';
 
   useEffect(() => {
-    fetch(`${API_URL}/tickets`, {
+    setLoading(true);
+    const params = new URLSearchParams({ page, size: pageSize, sort });
+    if (session?.role === 'TECHNICIAN') params.set('technicianId', session.userId);
+    fetch(`${API_URL}/tickets?${params}`, {
       headers: getAuthHeaders(),
     })
       .then((response) => response.ok ? response.json() : Promise.reject(new Error('API indisponível')))
       .then((data) => {
-        setTickets(Array.isArray(data) ? data : []);
+        setTickets(Array.isArray(data) ? data : data.content || []);
+        setTotalTickets(Array.isArray(data) ? data.length : data.totalElements || 0);
+        setTotalPages(Array.isArray(data) ? 1 : data.totalPages || 0);
         setApiError('');
       })
       .catch(() => setApiError('Não foi possível carregar os chamados do banco de dados.'))
       .finally(() => setLoading(false));
-  }, []);
+  }, [page, pageSize, sort, session?.role, session?.userId]);
 
   useEffect(() => {
     if (isAdmin) return;
@@ -82,8 +92,8 @@ function ChamadosPage({ session, onTicketsCountChange }) {
   }, [isAdmin]);
 
   useEffect(() => {
-    onTicketsCountChange?.(tickets.length);
-  }, [tickets.length, onTicketsCountChange]);
+    onTicketsCountChange?.(totalTickets);
+  }, [totalTickets, onTicketsCountChange]);
 
   const visibleTickets = isClient
     ? tickets.filter((ticket) => Number(ticket.customerId) === Number(session.userId))
@@ -95,8 +105,13 @@ function ChamadosPage({ session, onTicketsCountChange }) {
     return matchesQuery && (statusFilter === 'ALL' || ticketStatus(ticket) === statusFilter) && (priorityFilter === 'ALL' || ticket.priority === priorityFilter);
   }), [visibleTickets, query, statusFilter, priorityFilter]);
 
+  function resetToFirstPage(setter) {
+    setter();
+    setPage(0);
+  }
+
   const metrics = [
-    { label: 'Total de chamados', value: visibleTickets.length, icon: FileText, tone: 'blue' },
+    { label: 'Total de chamados', value: totalTickets, icon: FileText, tone: 'blue' },
     { label: 'Abertos', value: visibleTickets.filter((ticket) => ticketStatus(ticket) === 'OPEN').length, icon: CircleDot, tone: 'amber' },
     { label: 'Em atendimento', value: visibleTickets.filter((ticket) => ticketStatus(ticket) === 'IN_PROGRESS').length, icon: Activity, tone: 'violet' },
     { label: 'Resolvidos', value: visibleTickets.filter((ticket) => ticketStatus(ticket) === 'RESOLVED').length, icon: CheckCircle2, tone: 'green' },
@@ -128,7 +143,8 @@ function ChamadosPage({ session, onTicketsCountChange }) {
       return;
     }
     const createdTicket = await response.json();
-    setTickets((current) => [createdTicket, ...current]);
+    if (page === 0) setTickets((current) => [createdTicket, ...current].slice(0, pageSize));
+    setTotalTickets((current) => current + 1);
     setApiError('');
     setModalOpen(false);
   }
@@ -195,9 +211,9 @@ function ChamadosPage({ session, onTicketsCountChange }) {
     <div className="page-heading"><div><p className="eyebrow">SEGUNDA-FEIRA, 24 DE AGOSTO DE 2026</p><h1>Central de chamados</h1><p className="subheading">Acompanhe e organize o suporte da sua operação.</p></div><button className="primary-button" onClick={() => setModalOpen(true)}><Plus size={18} /> Novo chamado</button></div>
     <div className="metrics-grid">{metrics.map(({ label, value, icon: Icon, tone }) => <article className="metric-card" key={label}><div className={`metric-icon ${tone}`}><Icon size={19} /></div><div className="metric-copy"><span>{label}</span><strong>{value}</strong></div></article>)}</div>
     <div className="section-header"><div><h2>Todos os chamados</h2><p>Visão geral da fila de atendimento</p></div></div>
-    <section className="ticket-panel"><div className="toolbar"><div className="search-field"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar por título ou número..." /></div><div className="filter-group"><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} aria-label="Filtrar por status"><option value="ALL">Todos os status</option>{Object.entries(statusLabels).map(([key, label]) => <option value={key} key={key}>{label}</option>)}</select><select value={priorityFilter} onChange={(event) => setPriorityFilter(event.target.value)} aria-label="Filtrar por prioridade"><option value="ALL">Todas prioridades</option>{Object.entries(priorityLabels).map(([key, label]) => <option value={key} key={key}>{label}</option>)}</select><button className="filter-button" aria-label="Mais filtros"><SlidersHorizontal size={17} /></button></div></div>
+    <section className="ticket-panel"><div className="toolbar"><div className="search-field"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar por título ou número..." /></div><div className="filter-group"><select value={statusFilter} onChange={(event) => resetToFirstPage(() => setStatusFilter(event.target.value))} aria-label="Filtrar por status"><option value="ALL">Todos os status</option>{Object.entries(statusLabels).map(([key, label]) => <option value={key} key={key}>{label}</option>)}</select><select value={priorityFilter} onChange={(event) => resetToFirstPage(() => setPriorityFilter(event.target.value))} aria-label="Filtrar por prioridade"><option value="ALL">Todas prioridades</option>{Object.entries(priorityLabels).map(([key, label]) => <option value={key} key={key}>{label}</option>)}</select><select value={sort} onChange={(event) => resetToFirstPage(() => setSort(event.target.value))} aria-label="Ordenar chamados"><option value="createdAt,desc">Mais recentes</option><option value="createdAt,asc">Mais antigos</option><option value="priority,desc">Maior prioridade</option><option value="title,asc">Título (A-Z)</option></select><button className="filter-button" aria-label="Mais filtros"><SlidersHorizontal size={17} /></button></div></div>
       <div className="table-wrap">{apiError ? <div className="empty-state error-state"><AlertTriangle size={22} /><strong>{apiError}</strong><span>Confirme se o gateway e o banco estão em execução.</span></div> : isLoading ? <div className="empty-state"><Activity size={22} /><strong>Carregando chamados...</strong></div> : <><table><thead><tr><th>Chamado</th><th>Categoria</th><th>Prioridade</th><th>Status</th><th>Atualizado</th><th /></tr></thead><tbody>{filteredTickets.map((ticket) => <tr key={ticket.id} onClick={() => setSelectedTicket(ticket)}><td><div className="ticket-title"><span className="ticket-id">#{ticket.id}</span><strong>{ticket.title}</strong></div></td><td><span className="category-label">{categoryLabels[ticketCategory(ticket)] || ticketCategory(ticket)}</span></td><td><span className={`priority ${(ticket.priority || 'UNKNOWN').toLowerCase()}`}><span />{priorityLabels[ticket.priority] || ticket.priority || 'Não informada'}</span></td><td><span className={`status ${ticketStatus(ticket).toLowerCase()}`}>{statusLabels[ticketStatus(ticket)] || ticketStatus(ticket)}</span></td><td><span className="date-label"><Clock3 size={14} />{formatDate(ticket.updatedAt || ticket.createdAt)}</span></td><td><button className="row-menu" aria-label={`Abrir chamado ${ticket.id}`}>•••</button></td></tr>)}</tbody></table>{filteredTickets.length === 0 && <div className="empty-state"><Search size={22} /><strong>Nenhum chamado encontrado</strong><span>O banco de dados não possui chamados para estes filtros.</span></div>}</>}</div>
-      <div className="table-footer"><span>Mostrando <strong>{filteredTickets.length}</strong> de <strong>{tickets.length}</strong> chamados</span><div className="pagination"><button disabled>‹</button><button className="current-page">1</button><button disabled>›</button></div></div>
+      <div className="table-footer"><span>Mostrando <strong>{filteredTickets.length}</strong> de <strong>{totalTickets}</strong> chamados</span><div className="pagination"><button disabled={page === 0} onClick={() => setPage((current) => current - 1)} aria-label="Página anterior"><ChevronLeft size={16} /></button><span className="current-page">{totalPages === 0 ? 0 : page + 1} / {totalPages}</span><button disabled={page >= totalPages - 1} onClick={() => setPage((current) => current + 1)} aria-label="Próxima página"><ChevronRight size={16} /></button><select value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(0); }} aria-label="Chamados por página"><option value="10">10 por página</option><option value="25">25 por página</option><option value="50">50 por página</option></select></div></div>
     </section>
 
     {isModalOpen && <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setModalOpen(false)}><div className="modal"><div className="modal-header"><div><p className="eyebrow">NOVO ATENDIMENTO</p><h2>Abrir chamado</h2></div><button className="close-button" onClick={() => setModalOpen(false)} aria-label="Fechar"><X size={20} /></button></div><form onSubmit={createTicket}><label>Título<input name="title" required placeholder="Ex.: Notebook não liga" /></label><label>Descrição<textarea name="description" required placeholder="Descreva o problema com o máximo de detalhes" rows="4" /></label><div className="form-grid"><label>Categoria<select name="category" defaultValue="SOFTWARE"><option value="HARDWARE">Hardware</option><option value="SOFTWARE">Software</option><option value="NETWORK">Rede</option></select></label><label>Prioridade<select name="priority" defaultValue="MEDIUM"><option value="LOW">Baixa</option><option value="MEDIUM">Média</option><option value="HIGH">Alta</option><option value="CRITICAL">Crítica</option></select></label></div><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setModalOpen(false)}>Cancelar</button><button type="submit" className="primary-button">Criar chamado <ArrowUpRight size={17} /></button></div></form></div></div>}
