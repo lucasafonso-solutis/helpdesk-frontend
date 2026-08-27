@@ -42,6 +42,7 @@ function ChamadosPage({ session, onTicketsCountChange }) {
   const [pageSize, setPageSize] = useState(10);
   const [sort, setSort] = useState('createdAt,desc');
   const [totalPages, setTotalPages] = useState(0);
+  const [ticketMetrics, setTicketMetrics] = useState({ total: 0, open: 0, inProgress: 0, resolved: 0, critical: 0 });
   const [users, setUsers] = useState([]);
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
@@ -87,6 +88,21 @@ function ChamadosPage({ session, onTicketsCountChange }) {
   }, [page, pageSize, sort, query, statusFilter, priorityFilter, categoryFilter, technicianFilter, createdFrom, createdTo, session?.role, session?.userId, isClient, isAdmin]);
 
   useEffect(() => {
+    const params = new URLSearchParams();
+    if (query.trim()) params.set('search', query.trim());
+    if (categoryFilter !== 'ALL') params.set('category', categoryFilter);
+    if (session?.role === 'TECHNICIAN') params.set('technicianId', session.userId);
+    if (isClient) params.set('customerId', session.userId);
+    if (isAdmin && technicianFilter !== 'ALL') params.set('technicianId', technicianFilter);
+    if (createdFrom) params.set('createdFrom', `${createdFrom}T00:00:00`);
+    if (createdTo) params.set('createdTo', `${createdTo}T23:59:59`);
+    fetch(`${API_URL}/tickets/metrics?${params}`, { headers: getAuthHeaders() })
+      .then((response) => response.ok ? response.json() : Promise.reject(new Error('API indisponível')))
+      .then((data) => setTicketMetrics(data))
+      .catch(() => setTicketMetrics({ total: 0, open: 0, inProgress: 0, resolved: 0, critical: 0 }));
+  }, [query, categoryFilter, technicianFilter, createdFrom, createdTo, session?.role, session?.userId, isClient, isAdmin]);
+
+  useEffect(() => {
     if (isAdmin) return;
     const userIds = [...new Set(tickets.flatMap((ticket) => [ticket.customerId, ticket.technicianId]).filter(Boolean))];
     Promise.all(userIds.map((id) => fetch(`${API_URL}/users/${id}/summary`, { headers: getAuthHeaders() }).then((response) => response.ok ? response.json() : null)))
@@ -105,8 +121,8 @@ function ChamadosPage({ session, onTicketsCountChange }) {
   }, [isAdmin]);
 
   useEffect(() => {
-    onTicketsCountChange?.(totalTickets);
-  }, [totalTickets, onTicketsCountChange]);
+    onTicketsCountChange?.(ticketMetrics.total);
+  }, [ticketMetrics.total, onTicketsCountChange]);
 
   const visibleTickets = isClient
     ? tickets.filter((ticket) => Number(ticket.customerId) === Number(session.userId))
@@ -132,11 +148,11 @@ function ChamadosPage({ session, onTicketsCountChange }) {
   }
 
   const metrics = [
-    { label: 'Total de chamados', value: totalTickets, icon: FileText, tone: 'blue' },
-    { label: 'Abertos', value: visibleTickets.filter((ticket) => ticketStatus(ticket) === 'OPEN').length, icon: CircleDot, tone: 'amber' },
-    { label: 'Em atendimento', value: visibleTickets.filter((ticket) => ticketStatus(ticket) === 'IN_PROGRESS').length, icon: Activity, tone: 'violet' },
-    { label: 'Resolvidos', value: visibleTickets.filter((ticket) => ticketStatus(ticket) === 'RESOLVED').length, icon: CheckCircle2, tone: 'green' },
-    { label: 'Chamados críticos', value: visibleTickets.filter((ticket) => ticket.priority === 'CRITICAL').length, icon: AlertTriangle, tone: 'red' },
+    { label: 'Total de chamados', value: ticketMetrics.total, icon: FileText, tone: 'blue' },
+    { label: 'Abertos', value: ticketMetrics.open, icon: CircleDot, tone: 'amber' },
+    { label: 'Em atendimento', value: ticketMetrics.inProgress, icon: Activity, tone: 'violet' },
+    { label: 'Resolvidos', value: ticketMetrics.resolved, icon: CheckCircle2, tone: 'green' },
+    { label: 'Chamados críticos', value: ticketMetrics.critical, icon: AlertTriangle, tone: 'red' },
   ];
 
   const technicians = users.filter((user) => user.userRole === 'TECHNICIAN');
